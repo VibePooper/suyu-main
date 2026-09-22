@@ -29,6 +29,16 @@ jobs:
       - name: Setup CMake
         uses: lukka/get-cmake@latest
 
+      - name: Install MSYS2 autotools
+        shell: pwsh
+        run: |
+          if (Test-Path "C:\msys64\usr\bin\bash.exe") {
+            & "C:\msys64\usr\bin\bash.exe" -lc "pacman --noconfirm -Sy --needed autoconf automake libtool"
+          } else {
+            Write-Error "MSYS2 was not found on the GitHub Windows runner."
+            exit 1
+          }
+
       - name: Configure
         shell: pwsh
         run: |
