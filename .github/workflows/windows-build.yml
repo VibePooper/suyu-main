@@ -26,6 +26,20 @@ jobs:
       - name: Setup CMake
         uses: lukka/get-cmake@latest
 
+      - name: Install shader compiler (glslang)
+        shell: pwsh
+        run: |
+          if (!(Test-Path "C:\msys64\usr\bin\bash.exe")) {
+            Write-Error "MSYS2 was not found on the GitHub Windows runner."
+            exit 1
+          }
+          & "C:\msys64\usr\bin\bash.exe" -lc "pacman --noconfirm -Sy --needed mingw-w64-x86_64-glslang"
+          Add-Content -Path $env:GITHUB_PATH -Value "C:\msys64\mingw64\bin"
+          if (!(Test-Path "C:\msys64\mingw64\bin\glslangValidator.exe")) {
+            Write-Error "glslangValidator.exe was not installed."
+            exit 1
+          }
+
       - name: Configure (MSVC / Visual Studio 2026)
         shell: pwsh
         run: |
