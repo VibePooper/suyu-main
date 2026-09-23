@@ -6633,8 +6633,10 @@ void GMainWindow::ApplyAppMode(AppMode mode) {
     const bool show_debug = (mode == AppMode::Hacker) && !emulation_running;
     [[maybe_unused]] const bool show_partial_debug = false;
 
+#if MICROPROFILE_ENABLED
     if (microProfileDialog)
         microProfileDialog->setVisible(show_debug);
+#endif
     if (waitTreeWidget)
         waitTreeWidget->setVisible(show_debug);
     // The controller view is hidden with the rest of the debug panes but never
