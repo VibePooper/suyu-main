@@ -63,16 +63,19 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
 try {
     $userDirectory = "$packageName/user/"
-    if (-not ($zip.Entries.FullName -contains $userDirectory)) {
-        throw 'Archive is missing the empty portable user directory.'
-    }
+    $hasUserDirectory = $false
     foreach ($entry in $zip.Entries) {
-        if ($entry.FullName.StartsWith($userDirectory) -and $entry.FullName -ne $userDirectory) {
+        $entryPath = $entry.FullName.Replace('\', '/')
+        if ($entryPath -eq $userDirectory) { $hasUserDirectory = $true }
+        if ($entryPath.StartsWith($userDirectory) -and $entryPath -ne $userDirectory) {
             throw 'Archive unexpectedly contains user data.'
         }
-        if ($entry.FullName -match '(?i)\.(dmp|keys|nsp|xci|nca|log)$') {
+        if ($entryPath -match '(?i)\.(dmp|keys|nsp|xci|nca|log)$') {
             throw 'Archive contains a forbidden user-data or diagnostic file.'
         }
+    }
+    if (-not $hasUserDirectory) {
+        throw 'Archive is missing the empty portable user directory.'
     }
     Write-Output "Archive verified: $($zip.Entries.Count) entries; portable user directory is empty."
 } finally {
