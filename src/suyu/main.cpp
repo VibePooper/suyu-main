@@ -141,7 +141,6 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include <DbgHelp.h>
 #include <shlobj.h>
 #include "common/windows/timer_resolution.h"
-#pragma comment(lib, "Dbghelp.lib")
 #endif
 #include "common/cpu_features.h"
 #include "common/settings.h"

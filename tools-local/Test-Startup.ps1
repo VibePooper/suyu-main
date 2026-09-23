@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ExecutablePath,
 
-    [ValidateSet('gamer', 'programmer', 'hacker')]
+    [ValidateSet('gamer', 'programmer', 'hacker', 'saved')]
     [string]$Mode = 'gamer',
 
     [ValidateRange(1, 300)]
@@ -21,8 +21,8 @@ if (Get-Process -Name $processName -ErrorAction SilentlyContinue) {
 $startInfo = New-Object System.Diagnostics.ProcessStartInfo
 $startInfo.FileName = $executable.FullName
 $startInfo.WorkingDirectory = $executable.DirectoryName
-$startInfo.Arguments = "-$Mode"
-$startInfo.UseShellExecute = $false
+$startInfo.Arguments = if ($Mode -eq 'saved') { '' } else { "-$Mode" }
+$startInfo.UseShellExecute = $true
 
 $settingsPath = 'Software\suyu team\suyu\General'
 $savedSettings = @{}
