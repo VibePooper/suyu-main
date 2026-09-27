@@ -239,7 +239,7 @@ bool RedirectSuyuDir(Common::FS::SuyuPath suyu_path, const std::filesystem::path
     if (base.empty()) {
         return false;
     }
-    const auto target = base / "suyu" / sub_dir;
+    const auto target = base / sub_dir;
     std::error_code ec;
     std::filesystem::create_directories(target, ec);
     if (ec) {
@@ -253,10 +253,17 @@ bool RedirectSuyuDir(Common::FS::SuyuPath suyu_path, const std::filesystem::path
 // Redirects suyu's persistent data out of %APPDATA%\suyu (or <retroarch>\user
 // in portable mode) and into the directories RetroArch itself hands the core:
 //   - RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY for config/keys/cache/logs
-//     (mirrors the existing <system_dir>/suyu/keys convention below)
 //   - RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY for NAND/SDMC/saves/screenshots,
 //     so RetroArch's own save handling (per-core folders, backups, cloud
 //     sync, etc.) covers suyu's data the same way it covers any other core
+// Each is placed directly in the frontend-provided directory (e.g.
+// <system_directory>\config, <save_directory>\nand) with no extra "suyu"
+// subfolder, so per-core RetroArch overrides that already point
+// system_directory/save_directory somewhere suyu-specific (as set up in a
+// core override .cfg) land exactly where they say, with nothing extra
+// appended. If you share that base directory with another emulator, point
+// the override somewhere suyu-specific instead of relying on this code to
+// namespace it for you.
 // Controlled by the "suyu_use_frontend_dirs" core option, enabled by default.
 // Must run before anything (including keys import, below) touches
 // Common::FS::GetSuyuPath, or those uses will already have grabbed the old,
@@ -321,6 +328,17 @@ void RedirectSuyuPathsToFrontend() {
     RedirectSuyuDir(SuyuPath::ShaderDir, system_base, "cache/shader");
     RedirectSuyuDir(SuyuPath::LogDir, system_base, "log");
     RedirectSuyuDir(SuyuPath::CrashDumpsDir, system_base, "crash_dumps");
+
+    // Root path that a couple of rarely-used secondary subsystems read
+    // directly (a nested-libretro-core loader's default firmware directory,
+    // and the hactool integration helper's temp-extraction and tool-search
+    // paths). Pointed at the system directory itself, with no subfolder, so
+    // nothing is ever written under %APPDATA% even for these.
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(system_base, ec);
+        Common::FS::SetSuyuPath(SuyuPath::EdenDir, system_base);
+    }
 
     LOG_INFO(Frontend, "libretro: redirected suyu data - system={} save={}", system_base.string(),
               save_base.string());
