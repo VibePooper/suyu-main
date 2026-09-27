@@ -231,6 +231,100 @@ void ShowPerfMessage(std::string text) {
         g_environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
     }
 }
+// Points a single suyu data directory at a subfolder of a frontend-provided
+// base directory, creating it first since Common::FS::SetSuyuPath silently
+// refuses to point at a path that doesn't exist yet (or isn't a directory).
+bool RedirectSuyuDir(Common::FS::SuyuPath suyu_path, const std::filesystem::path& base,
+                      const char* sub_dir) {
+    if (base.empty()) {
+        return false;
+    }
+    const auto target = base / "suyu" / sub_dir;
+    std::error_code ec;
+    std::filesystem::create_directories(target, ec);
+    if (ec) {
+        LOG_ERROR(Frontend, "libretro: failed to create {} ({})", target.string(), ec.message());
+        return false;
+    }
+    Common::FS::SetSuyuPath(suyu_path, target);
+    return true;
+}
+
+// Redirects suyu's persistent data out of %APPDATA%\suyu (or <retroarch>\user
+// in portable mode) and into the directories RetroArch itself hands the core:
+//   - RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY for config/keys/cache/logs
+//     (mirrors the existing <system_dir>/suyu/keys convention below)
+//   - RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY for NAND/SDMC/saves/screenshots,
+//     so RetroArch's own save handling (per-core folders, backups, cloud
+//     sync, etc.) covers suyu's data the same way it covers any other core
+// Controlled by the "suyu_use_frontend_dirs" core option, enabled by default.
+// Must run before anything (including keys import, below) touches
+// Common::FS::GetSuyuPath, or those uses will already have grabbed the old,
+// non-redirected paths.
+void RedirectSuyuPathsToFrontend() {
+    if (!g_environ_cb) {
+        return;
+    }
+
+    struct retro_variable var {
+        "suyu_use_frontend_dirs", nullptr
+    };
+    // Frontends make the declared default available as soon as
+    // RETRO_ENVIRONMENT_SET_VARIABLES has run, i.e. before retro_init() is
+    // even called, so this reads correctly on a completely fresh install too.
+    bool use_frontend_dirs = true;
+    if (g_environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+        use_frontend_dirs = std::strcmp(var.value, "Disabled") != 0;
+    }
+    if (!use_frontend_dirs) {
+        LOG_INFO(Frontend, "libretro: suyu_use_frontend_dirs disabled, keeping default data location");
+        return;
+    }
+
+    const char* system_dir = nullptr;
+    const char* save_dir = nullptr;
+    g_environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir);
+    g_environ_cb(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &save_dir);
+
+    const std::filesystem::path system_base =
+        (system_dir && *system_dir) ? std::filesystem::path(system_dir) : std::filesystem::path{};
+    // Some setups (e.g. RetroArch's "Save files in content directory") can
+    // report an empty save directory even though a system directory exists.
+    // Fall back to the system directory as the root for save-type data too,
+    // rather than silently reverting to %APPDATA% for just those folders.
+    const std::filesystem::path save_base =
+        (save_dir && *save_dir) ? std::filesystem::path(save_dir) : system_base;
+
+    if (system_base.empty()) {
+        LOG_WARNING(Frontend, "libretro: frontend gave no system directory; "
+                              "keeping suyu's default (%APPDATA%/portable) data location");
+        return;
+    }
+
+    using Common::FS::SuyuPath;
+
+    // Save-type data: goes under RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY.
+    RedirectSuyuDir(SuyuPath::NANDDir, save_base, "nand");
+    RedirectSuyuDir(SuyuPath::SaveDir, save_base, "nand"); // suyu aliases SaveDir to the NAND dir
+    RedirectSuyuDir(SuyuPath::SDMCDir, save_base, "sdmc");
+    RedirectSuyuDir(SuyuPath::ScreenshotsDir, save_base, "screenshots");
+    RedirectSuyuDir(SuyuPath::TASDir, save_base, "tas");
+    RedirectSuyuDir(SuyuPath::PlayTimeDir, save_base, "play_time");
+    RedirectSuyuDir(SuyuPath::AmiiboDir, save_base, "amiibo");
+    RedirectSuyuDir(SuyuPath::LoadDir, save_base, "load");
+    RedirectSuyuDir(SuyuPath::DumpDir, save_base, "dump");
+
+    // Fixed/system-type data: goes under RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY.
+    RedirectSuyuDir(SuyuPath::ConfigDir, system_base, "config");
+    RedirectSuyuDir(SuyuPath::KeysDir, system_base, "keys");
+    RedirectSuyuDir(SuyuPath::CacheDir, system_base, "cache");
+    RedirectSuyuDir(SuyuPath::ShaderDir, system_base, "cache/shader");
+    RedirectSuyuDir(SuyuPath::LogDir, system_base, "log");
+    RedirectSuyuDir(SuyuPath::CrashDumpsDir, system_base, "crash_dumps");
+
+    LOG_INFO(Frontend, "libretro: redirected suyu data - system={} save={}", system_base.string(),
+              save_base.string());
+}
 
 } // namespace
 
@@ -254,6 +348,13 @@ RETRO_API void retro_set_environment(retro_environment_t cb) {
         {"suyu_cpu_accuracy", "CPU Accuracy (reload content); Auto|Accurate|Unsafe"},
         {"suyu_use_docked", "Docked Mode (reload content); Yes|No"},
         {"suyu_fastmem", "Fastmem (reload content); Enabled|Disabled"},
+        // Redirects suyu's data (NAND/SDMC/saves/config/keys/cache/logs) into
+        // RetroArch's own system/save directories instead of suyu's normal
+        // %APPDATA%\suyu (or <retroarch>\user in portable mode) location.
+        // Default is Enabled so the core behaves like other libretro cores
+        // out of the box; switch to Disabled to keep using a standalone
+        // suyu install's existing data instead.
+        {"suyu_use_frontend_dirs", "Use RetroArch System/Save Directories; Enabled|Disabled"},
         {"suyu_audio_output", "Audio Output (reload content); Host (direct)|Frontend (libretro)"},
         // suyu's own online play. RetroArch's netplay can't drive this core
         // (see retro_serialize_size), but suyu's room system tunnels the
@@ -321,6 +422,11 @@ RETRO_API void retro_init() {
     Common::Log::Start();
 
     LOG_INFO(Frontend, "libretro core: retro_init() starting");
+
+    // Must happen before any Common::FS::GetSuyuPath() call (including the
+    // key-import block just below), or those calls will already have latched
+    // onto the old %APPDATA%/portable paths.
+    RedirectSuyuPathsToFrontend();
 
     PrepareLibretroKeys();
     g_system = std::make_unique<Core::System>();
