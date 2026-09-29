@@ -130,6 +130,11 @@ unsigned g_perf_unique_frames = 0;
 // False: suyu drives a host audio device directly (default, sounds correct).
 // True: samples are handed to the frontend via retro_audio_sample_batch.
 bool g_use_frontend_audio = false;
+// Set once RETRO_ENVIRONMENT_SET_AUDIO_CALLBACK registration succeeds (see
+// retro_load_game()). When true, retro_run() leaves audio delivery to
+// FrontendAudioCallback() instead of doing it inline, since both draining the
+// same queue would just race pointlessly.
+bool g_audio_callback_registered = false;
 
 retro_environment_t g_environ_cb;
 retro_video_refresh_t g_video_cb;
@@ -579,6 +584,81 @@ constexpr RetroToVirtual kButtonMap[] = {
 bool g_prev_buttons[20] = {};
 } // namespace
 
+namespace {
+
+// Drains whatever the emulated audio renderer produced since the last call
+// and hands it to the frontend. upload_batch takes frames (L+R pairs), not
+// individual samples. Feed the frontend a steady ~1 frame of audio per call
+// rather than whatever has piled up: RetroArch resamples against its own
+// clock and expects roughly sample_rate/fps frames each call, and handing it
+// a quarter second in one lump and nothing for the next 15 calls is what made
+// the output screech. Anything beyond a small backlog is dropped so latency
+// can't creep up instead.
+//
+// Called either from retro_run() (frontends too old to support
+// RETRO_ENVIRONMENT_SET_AUDIO_CALLBACK) or from FrontendAudioCallback()
+// below, never both - see g_audio_callback_registered.
+void DeliverPendingAudio() {
+    if (!g_use_frontend_audio || !g_audio_batch_cb || !g_game_loaded) {
+        return;
+    }
+
+    constexpr size_t kFramesPerCall = 48000 / 60; // stereo frames
+    constexpr size_t kMaxBacklogFrames = kFramesPerCall * 6;
+
+    static std::vector<s16> pending; // interleaved L,R awaiting delivery
+    std::vector<s16> drained;
+    AudioCore::Sink::LibretroSampleQueue::Instance().Drain(drained);
+    if (!drained.empty()) {
+        pending.insert(pending.end(), drained.begin(), drained.end());
+    }
+
+    // Trim from the front if we've fallen behind; stale audio is worse than a
+    // short gap.
+    if (pending.size() > kMaxBacklogFrames * 2) {
+        const size_t excess = pending.size() - kMaxBacklogFrames * 2;
+        pending.erase(pending.begin(), pending.begin() + static_cast<ptrdiff_t>(excess));
+    }
+
+    const size_t frames = std::min(kFramesPerCall, pending.size() / 2);
+    if (frames > 0) {
+        g_audio_batch_cb(pending.data(), frames);
+        pending.erase(pending.begin(), pending.begin() + static_cast<ptrdiff_t>(frames * 2));
+    }
+}
+
+// Called by the frontend's own audio thread once RETRO_ENVIRONMENT_SET_AUDIO_CALLBACK
+// is registered, independently of whether retro_run() is being called at all.
+void RETRO_CALLCONV FrontendAudioCallback() {
+    DeliverPendingAudio();
+}
+
+// The actual reason to register SET_AUDIO_CALLBACK at all: its set_state
+// half is the one libretro hook that still fires while the frontend has
+// stopped calling retro_run() entirely (RetroArch's menu open, content
+// paused, rewind, etc.). Without this, suyu's own CPU/GPU threads - kicked
+// off once by g_system->Run() in retro_load_game() and never revisited -
+// keep running regardless of whether the frontend is still ticking us, which
+// is why the game previously kept advancing behind the RetroArch menu.
+// enabled=false means "the frontend has gone quiet"; enabled=true means
+// "resume normal operation".
+void RETRO_CALLCONV FrontendAudioSetState(bool enabled) {
+    if (!g_system || !g_game_loaded) {
+        return;
+    }
+    if (enabled) {
+        if (g_system->IsPaused()) {
+            g_system->Run();
+        }
+    } else {
+        if (!g_system->IsPaused()) {
+            g_system->Pause();
+        }
+    }
+}
+
+} // namespace
+
 RETRO_API void retro_run() {
     // This frontend is the sole periodic consumer of the destructive stats read.
     // Sample guest rendering/timing, independently of retro_run's frontend FPS.
@@ -688,37 +768,12 @@ RETRO_API void retro_run() {
         fflush(stderr);
     }
 
-    // Hand over whatever the emulated audio renderer produced since the last
-    // frame. upload_batch takes frames (L+R pairs), not individual samples.
-    // Feed the frontend a steady ~1 frame of audio per call rather than
-    // whatever has piled up. RetroArch resamples against its own clock and
-    // expects roughly sample_rate/fps frames each retro_run; handing it a
-    // quarter second in one lump and nothing for the next 15 calls is what
-    // made the output screech. Anything beyond a small backlog is dropped so
-    // latency can't creep up instead.
-    if (g_use_frontend_audio && g_audio_batch_cb && g_game_loaded) {
-        constexpr size_t kFramesPerCall = 48000 / 60;   // stereo frames
-        constexpr size_t kMaxBacklogFrames = kFramesPerCall * 6;
-
-        static std::vector<s16> pending;   // interleaved L,R awaiting delivery
-        std::vector<s16> drained;
-        AudioCore::Sink::LibretroSampleQueue::Instance().Drain(drained);
-        if (!drained.empty()) {
-            pending.insert(pending.end(), drained.begin(), drained.end());
-        }
-
-        // Trim from the front if we've fallen behind; stale audio is worse
-        // than a short gap.
-        if (pending.size() > kMaxBacklogFrames * 2) {
-            const size_t excess = pending.size() - kMaxBacklogFrames * 2;
-            pending.erase(pending.begin(), pending.begin() + static_cast<ptrdiff_t>(excess));
-        }
-
-        const size_t frames = std::min(kFramesPerCall, pending.size() / 2);
-        if (frames > 0) {
-            g_audio_batch_cb(pending.data(), frames);
-            pending.erase(pending.begin(), pending.begin() + static_cast<ptrdiff_t>(frames * 2));
-        }
+    // Only handle audio here ourselves if no async audio callback took over
+    // in retro_load_game() - otherwise FrontendAudioCallback() is already
+    // draining the same queue from the frontend's audio thread, and doing it
+    // in both places would just race for no benefit.
+    if (!g_audio_callback_registered) {
+        DeliverPendingAudio();
     }
 
     if (g_video_cb && g_system && g_game_loaded) {
@@ -1093,6 +1148,24 @@ RETRO_API bool retro_load_game(const struct retro_game_info* game) {
     g_perf_start = g_perf_last_sample = std::chrono::steady_clock::now();
     g_system->Run();
     g_game_loaded = true;
+
+    // Register for the frontend's audio-pause notification (see
+    // FrontendAudioSetState's comment) so opening the RetroArch menu, or
+    // pausing content, actually pauses suyu's own CPU/GPU threads instead of
+    // letting them run on unattended in the background.
+    struct retro_audio_callback audio_cb {};
+    audio_cb.callback = FrontendAudioCallback;
+    audio_cb.set_state = FrontendAudioSetState;
+    g_audio_callback_registered = g_environ_cb(RETRO_ENVIRONMENT_SET_AUDIO_CALLBACK, &audio_cb);
+    if (g_audio_callback_registered) {
+        LOG_INFO(Frontend, "libretro core: registered async audio callback - "
+                            "frontend pause/menu will now pause emulation");
+    } else {
+        LOG_WARNING(Frontend, "libretro core: frontend doesn't support "
+                               "RETRO_ENVIRONMENT_SET_AUDIO_CALLBACK - opening the menu or "
+                               "pausing content won't pause suyu's own emulation");
+    }
+
     LOG_INFO(Frontend, "libretro core: game loaded and running");
     return true;
 }
