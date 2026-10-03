@@ -127,7 +127,7 @@ public:
      * Read from the current settings to determine which layout to use.
      */
     void UpdateCurrentFramebufferLayout(u32 width, u32 height);
-    g_emu_window->UpdateCurrentFramebufferLayout(u32 (1280 * factor),u32 (720 * factor) height);
+    
 
 protected:
     explicit EmuWindow();
