@@ -9,7 +9,7 @@
 </h1>
 
 <h4 align="center">
-Nintendo Switch emulator and native recompiler — based on <a href="https://git.eden-emu.dev/eden-emu/eden">Eden</a>, which itself descends from yuzu.
+A Nintendo Switch Emulation, Recompilation, Development and Launcher Toolkit — based on <a href="https://git.eden-emu.dev/eden-emu/eden">Eden</a>, which itself descends from yuzu.
 </h4>
 
 <p align="center">
@@ -22,18 +22,18 @@ Nintendo Switch emulator and native recompiler — based on <a href="https://git
 
 ---
 
-> **This is a continuation of suyu, which was archived upstream at v0.04.**
+> **Development is starting again under new management, help wanted**
 >
 > [`suyu-emu/suyu-v0.0.4`](https://github.com/suyu-emu/suyu-v0.0.4) is a public
-> archive and no further development was planned there. This fork picks it up
-> from commit `d1d09321d7` and continues the numbering, now at **v0.0.11**.
+> archive and no further development was planned there. This repository picks it up
+> from commit `d1d09321d7` and continues development, now at **v0.0.11**.
 >
 > The name and version line are kept deliberately, so the lineage stays legible.
 > `BUILD_FULLNAME` reads `suyu v0.0.11 (mk8-recomp)` — the suffix says *which*
 > 0.0.11 a binary is, since the archived repository could in principle be picked
 > up by others too. See [PROVENANCE.md](PROVENANCE.md).
 >
-> Work happens on the `mk8-recomp` branch, driven by
+> Work happens on the `mk8-recomp` branch (soon to be renamed Main), driven by
 > [mk8-recomp](https://github.com/dougchansan/mk8-recomp) — a project statically
 > recompiling Switch titles to native x86-64 using this recompiler. Fixes that
 > are not recompiler-specific are listed below and are useful to anyone running
@@ -43,26 +43,21 @@ Nintendo Switch emulator and native recompiler — based on <a href="https://git
 
 suyu is a Nintendo Switch emulator and AArch64 native recompiler written in C++. It can run decrypted Switch titles using either:
 
-- **HLE/emulation mode** — full hardware-level emulation via the suyu core (GPU, CPU, audio, services)
+- **High Level Emulation mode** — full hardware-level emulation via the suyu core (GPU, CPU, audio, services)
 - **Recompiler mode** — ahead-of-time static recompilation of Switch AArch64 game code to native x86-64 executables, bundled with suyu's HLE backend
 
 Based on [Eden](https://git.eden-emu.dev/eden-emu/eden), with suyu's own improvements to UI, recompiler, and platform support.
 
 ## Status
 
-Current version: **v0.0.11**, continuing from the archived v0.04.
-
-Upstream was inconsistent about its own version — the repository is named
-`suyu-v0.0.4`, the tag reads `v0.04-latest`, and `BUILD_FULLNAME` was hardcoded
-to `v0.04`. This fork normalises to the three-part form. Read literally, `v0.04`
-means 0.4, which was evidently not the intent.
+Current version: **v0.0.11**.
 
 Platforms: Windows and Linux both build and run. macOS (arm64) builds and runs:
 games boot under Vulkan/MoltenVK with the bundled MoltenVK library, and MK8D
 races at 59–60 fps on the JIT; see [macOS](#macos). A RetroArch (libretro) core
 builds for Windows, Linux and macOS. Android: the APK and an opt-in ARM64
 libretro core build, but have run only in a software emulator; real devices are
-untested. iOS is not included.
+untested. iOS is in development. FreeBSD has builds as well.
 
 Linux needs five things Windows does not, all handled by
 [`scripts/build-suyu.sh`][bld] in the consuming project:
@@ -80,6 +75,9 @@ carriage returns inside string literals, and a boost forwarding header that
 resolved only where CPM had fetched boost.
 
 [bld]: https://github.com/dougchansan/mk8-recomp/blob/main/scripts/build-suyu.sh
+
+
+There will be a ROADMAP.MD for suyu's plans as a project soon.
 
 ## Static recompilation
 
@@ -116,7 +114,7 @@ Older speedup numbers used a retired title-screen input fixture and predate the 
 
 See [release notes](docs/releases/v0.0.11.md) and the [campaign and regression safeguards](docs/static-campaign.md). Build/test scripts and synthetic instruction suites are maintained in [mk8-recomp](https://github.com/dougchansan/mk8-recomp).
 
-## Changes in v0.0.5
+## Changes in recent updates
 
 Five of these are defects in suyu itself rather than recompiler work, and affect
 ordinary emulation. Each is one commit.
@@ -201,6 +199,8 @@ The suyu Emulator also falls under the exemptions stated in Section 1201(f) of t
 Any aggressive DMCA claims or takedown notices against projects that explicitly disclaim piracy support, require user-provided keys, and limit functionality to interoperability (such as suyu) could constitute overreach or misuse of the DMCA.
 
 As derived from §512(f), if Nintendo (or an affiliated entity) knowingly materially misrepresents that a project like suyu is infringing (or circumvents TPMs) when it does not, especially if they fail to consider fair use, interoperability exemptions under §1201(f), or the fact that the emulator requires user-provided keys and does not itself contain proprietary Nintendo code, they can be made liable for any Damages against suyu.
+
+See [Legal.MD](https://github.com/suyu-emu/LEGAL.MD).
 
 ## Building
 
