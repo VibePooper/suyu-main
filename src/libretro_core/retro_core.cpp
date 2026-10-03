@@ -127,6 +127,10 @@ u64 g_presented_frame = 0;
 bool g_have_presented = false;
 unsigned g_perf_frontend_frames = 0;
 unsigned g_perf_unique_frames = 0;
+
+unsigned g_output_scale = 1;
+bool g_geometry_dirty = false;
+
 // False: suyu drives a host audio device directly (default, sounds correct).
 // True: samples are handed to the frontend via retro_audio_sample_batch.
 bool g_use_frontend_audio = false;
@@ -731,6 +735,15 @@ RETRO_API void retro_run() {
             g_perf_frontend_frames = 0;
             g_perf_unique_frames = 0;
         }
+    if (g_geometry_dirty && g_environ_cb) {
+        retro_game_geometry geom{};
+        geom.base_width = kFrameWidth * g_output_scale;
+        geom.base_height = kFrameHeight * g_output_scale;
+        geom.max_width = kFrameWidth * 4;
+        geom.max_height = kFrameHeight * 4;
+        geom.aspect_ratio = (float)kFrameWidth / (float)kFrameHeight;
+        g_environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &geom);
+        g_geometry_dirty = false;
     }
     if (g_input_poll_cb) {
         g_input_poll_cb();
@@ -975,6 +988,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info* game) {
             else if (v == "3x") res = Settings::ResolutionSetup::Res3X;
             else if (v == "4x") res = Settings::ResolutionSetup::Res4X;
             Settings::values.resolution_setup.SetValue(res);
+            g_output_scale = (res == Res2X ? 2 : res == Res3X ? 3 : res == Res4X ? 4 : 1);
         }
         var.key = "suyu_scaling_filter";
         var.value = nullptr;
@@ -1015,6 +1029,8 @@ RETRO_API bool retro_load_game(const struct retro_game_info* game) {
             Settings::values.cpuopt_fastmem_exclusives.SetValue(enabled);
         }
         g_system->ApplySettings();
+
+        g_emu_window->UpdateCurrentFramebufferLayout(kFrameWidth * g_output_scale, kFrameHeight * g_output_scale);
 
         // Join a suyu room if the user configured one. Done here rather than
         // in retro_init so the options the frontend collected are already
@@ -1179,6 +1195,8 @@ RETRO_API void retro_unload_game() {
     g_sample_perf = false;
     g_have_presented = false;
     if (g_system && g_game_loaded) {
+        g_output_scale = 1;
+        g_geometry_dirty = false;
         g_system->ShutdownMainProcess();
     }
     if (g_emu_window) {
