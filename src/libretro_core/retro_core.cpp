@@ -984,11 +984,18 @@ RETRO_API bool retro_load_game(const struct retro_game_info* game) {
         if (g_environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
             const std::string v(var.value);
             auto res = Settings::ResolutionSetup::Res1X;
-            if (v == "2x") res = Settings::ResolutionSetup::Res2X;
-            else if (v == "3x") res = Settings::ResolutionSetup::Res3X;
-            else if (v == "4x") res = Settings::ResolutionSetup::Res4X;
+            if (v == "2x") {
+                res = Settings::ResolutionSetup::Res2X;
+                g_output_scale = 2;
+            } else if (v == "3x") {
+                res = Settings::ResolutionSetup::Res3X;
+                g_output_scale = 3;
+            }
+            else if (v == "4x") {
+                res = Settings::ResolutionSetup::Res4X;
+                g_output_scale = 4;
+            }
             Settings::values.resolution_setup.SetValue(res);
-            g_output_scale = (res == Res2X ? 2 : res == Res3X ? 3 : res == Res4X ? 4 : 1);
         }
         var.key = "suyu_scaling_filter";
         var.value = nullptr;
