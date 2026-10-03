@@ -441,15 +441,15 @@ RETRO_API void retro_init() {
     Common::FS::SetAppDirectory(user_directory.string());
     Common::FS::CreateSuyuPaths();
 #endif
-    Common::Log::Initialize();
-    Common::Log::Start();
-
-    LOG_INFO(Frontend, "libretro core: retro_init() starting");
-
     // Must happen before any Common::FS::GetSuyuPath() call (including the
     // key-import block just below), or those calls will already have latched
     // onto the old %APPDATA%/portable paths.
     RedirectSuyuPathsToFrontend();
+  
+    Common::Log::Initialize();
+    Common::Log::Start();
+
+    LOG_INFO(Frontend, "libretro core: retro_init() starting");
 
     PrepareLibretroKeys();
     g_system = std::make_unique<Core::System>();
