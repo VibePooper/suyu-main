@@ -127,6 +127,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #endif
 
 #include <fmt/format.h>
+#include "common/cpu_cache_affinity.h"
 #include "common/detached_tasks.h"
 #include "common/fs/fs.h"
 #include "common/fs/path_util.h"
@@ -2166,6 +2167,8 @@ bool GMainWindow::LoadROM(const QString& filename, Service::AM::FrontendAppletPa
         nullptr,                                             // Net Connect
     });
 
+    // Before Load creates the emulated CPU threads.
+    Common::ApplyLargestCacheAffinity(Settings::values.cache_affinity.GetValue());
     const Core::SystemResultStatus result{
         system->Load(*render_window, filename.toStdString(), params)};
 
