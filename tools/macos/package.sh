@@ -17,10 +17,20 @@ trap 'rm -rf "$stage"; rm -f "$pending"' EXIT
 APP="$stage/suyu.app"
 ditto "$build/bin/suyu.app" "$APP"
 cp "$build/bin/suyu-cmd" "$APP/Contents/MacOS/"
-"$deploy" "$APP" -executable="$APP/Contents/MacOS/suyu-cmd" -always-overwrite
-# Preserve the existing release's exclusions for unused optional Qt modules.
-rm -f "$APP/Contents/PlugIns/iconengines/libqsvgicon.dylib" \
-      "$APP/Contents/PlugIns/imageformats/libqpdf.dylib" \
+# Homebrew splits Qt modules across formulae; qtbase's own rpaths do not
+# locate QtSvg, QtPdf and QtVirtualKeyboard when deploying their plugins.
+brew_prefix=$(brew --prefix)
+qt_prefix=$(brew --prefix qt)
+deploy_args=(-executable="$APP/Contents/MacOS/suyu-cmd" -always-overwrite
+             -no-codesign -verbose=2
+             -libpath="$qt_prefix/lib" -libpath="$brew_prefix/lib")
+for qt_lib in "$brew_prefix"/opt/qt*/lib; do
+    [[ -d "$qt_lib" && "$qt_lib" != "$brew_prefix/opt/qt@5/lib" ]] || continue
+    deploy_args+=(-libpath="$qt_lib")
+done
+"$deploy" "$APP" "${deploy_args[@]}"
+# Keep SVG image/icon support for suyu's themes. Exclude unused PDF/input plugins.
+rm -f "$APP/Contents/PlugIns/imageformats/libqpdf.dylib" \
       "$APP/Contents/PlugIns/platforminputcontexts/libqtvirtualkeyboardplugin.dylib"
 python3 - "$repo" "$APP" <<'PY'
 import plistlib
@@ -60,8 +70,16 @@ with plist.open('wb') as stream:
     plistlib.dump(info, stream)
 PY
 codesign --force --deep --sign - "$APP"
-python3 "$repo/tools/macos/verify_bundle.py" "$APP" --report "$out/bundle-audit.json"
-python3 "$repo/tools/macos/verify_startup.py" "$APP" --evidence "$out/startup-evidence"
+if ! python3 "$repo/tools/macos/verify_bundle.py" "$APP" --report "$out/bundle-audit.json"; then
+    echo 'Bundle verification failed; details follow:' >&2
+    python3 -m json.tool "$out/bundle-audit.json" >&2
+    exit 1
+fi
+if ! python3 "$repo/tools/macos/verify_startup.py" "$APP" --evidence "$out/startup-evidence"; then
+    echo 'Startup verification failed; details follow:' >&2
+    python3 -m json.tool "$out/startup-evidence/startup-report.json" >&2
+    exit 1
+fi
 # No application ZIP is emitted if the audit or startup check fails.
 python3 "$repo/tools/package_policy/third_party_notices.py" --package-dir "$stage"
 cp "$repo/docs/macos-first-run.md" "$stage/FIRST-RUN.md"
