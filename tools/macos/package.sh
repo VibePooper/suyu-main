@@ -109,9 +109,10 @@ import sys
 from pathlib import Path
 repo, app = map(Path, sys.argv[1:])
 sys.path.insert(0, str(repo / 'tools/macos'))
-from verify_bundle import MACHO_MAGIC, inside, parse_dependencies, parse_identity, parse_rpaths, run, system_path
+from verify_bundle import MACHO_MAGIC, expand_path, inside, parse_dependencies, parse_identity, parse_rpaths, run, system_path
 app = app.resolve()
 frameworks = app / 'Contents/Frameworks'
+executable_dir = app / 'Contents/MacOS'
 seen = set()
 for candidate in sorted(app.rglob('*')):
     if not candidate.is_file():
@@ -141,7 +142,13 @@ for candidate in sorted(app.rglob('*')):
         replacement = '@rpath/' + target.relative_to(frameworks).as_posix()
         subprocess.run(['/usr/bin/install_name_tool', '-change', dependency, replacement, str(image)], check=True)
     for path in rpaths:
-        if path.startswith('/'):
+        # Homebrew plugins also carry relative paths that escape the app.
+        # Retain only supported paths that stay inside the relocated bundle.
+        try:
+            portable = not path.startswith('/') and inside(expand_path(path, image, executable_dir), app)
+        except ValueError:
+            portable = False
+        if not portable:
             subprocess.run(['/usr/bin/install_name_tool', '-delete_rpath', path, str(image)], check=True)
     relative = Path(os.path.relpath(frameworks, image.parent)).as_posix()
     bundled = '@loader_path' + (('/' + relative) if relative != '.' else '')
