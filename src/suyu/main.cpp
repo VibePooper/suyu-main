@@ -14,6 +14,7 @@
 #include <map>
 #include <mutex>
 #include <set>
+#include <string_view>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -108,6 +109,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include <QPushButton>
 #include <QScreen>
 #include <QSplashScreen>
+#include <QWindow>
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSortFilterProxyModel>
@@ -771,7 +773,7 @@ GMainWindow::GMainWindow(std::unique_ptr<QtConfig> config_, bool has_broken_vulk
     // the setup rather than it appearing over a blank screen. Skipped entirely
     // when a game was launched directly from the command line - that user is
     // not sitting down to a first run.
-    if (game_path.isEmpty()) {
+    if (game_path.isEmpty() && !args.contains(QStringLiteral("--verify-startup"))) {
         QTimer::singleShot(0, this, [this]() { RunFirstRunSetupIfNeeded(); });
     }
 
@@ -9384,6 +9386,21 @@ static void SetHighDPIAttributes() {
 }
 
 int main(int argc, char* argv[]) {
+    // Packaging-only check: run the real frontend without optional onboarding.
+    // The harness supplies an isolated settings directory, so this cannot mark
+    // a user's first run as complete or overwrite their preferences.
+    const bool verify_startup =
+        argc == 2 && std::string_view{argv[1]} == "--verify-startup";
+    if (verify_startup) {
+        const auto test_config = qgetenv("SUYU_STARTUP_TEST_CONFIG");
+        if (test_config.isEmpty()) {
+            fmt::print(stderr, "Use tools/macos/verify_startup.py for this check.\n");
+            return 2;
+        }
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                           QString::fromUtf8(test_config));
+    }
     std::unique_ptr<QtConfig> config = std::make_unique<QtConfig>();
     bool has_broken_vulkan = false;
     bool is_child = false;
@@ -9403,6 +9420,11 @@ int main(int argc, char* argv[]) {
 #ifdef SUYU_CRASH_DUMPS
     Breakpad::InstallCrashHandler();
 #endif
+
+    if (verify_startup && has_broken_vulkan) {
+        fmt::print(stderr, "Startup verification: Vulkan child process failed.\n");
+        return 1;
+    }
 
     Common::DetachedTasks detached_tasks;
     MicroProfileOnThreadCreate("Frontend");
@@ -9526,7 +9548,7 @@ int main(int argc, char* argv[]) {
 
     // Show mode selector on first launch or when not remembered, unless a mode was requested
     // explicitly for unattended startup or MCP-driven automation.
-    {
+    if (!verify_startup) {
         AppMode active_mode = requested_mode.value_or(ModeSelector::LoadSavedMode());
         QSettings settings;
         const bool remember = settings.value(QStringLiteral("General/RememberMode"), false).toBool();
@@ -9541,6 +9563,42 @@ int main(int argc, char* argv[]) {
 
     QObject::connect(&app, &QGuiApplication::applicationStateChanged, &main_window,
                      &GMainWindow::OnAppFocusStateChanged);
+
+    if (verify_startup) {
+        QTimer::singleShot(5000, &app, [&app, &main_window]() {
+            std::vector<VkDeviceInfo::Record> devices;
+            VkDeviceInfo::PopulateRecords(devices, main_window.windowHandle());
+            QJsonArray device_names;
+            bool has_present_modes = false;
+            for (const auto& device : devices) {
+                device_names.append(QString::fromStdString(device.name));
+                has_present_modes |= !device.vsync_support.empty();
+            }
+            const bool window_exposed = main_window.isVisible() && main_window.windowHandle() &&
+                                        main_window.windowHandle()->isExposed();
+            const bool cocoa = QGuiApplication::platformName() == QStringLiteral("cocoa");
+            const QString screenshot =
+                QString::fromUtf8(qgetenv("SUYU_STARTUP_SCREENSHOT"));
+            const bool screenshot_saved =
+                !screenshot.isEmpty() && main_window.grab().save(screenshot, "PNG");
+            const bool success =
+                cocoa && window_exposed && !devices.empty() && has_present_modes && screenshot_saved;
+            const QJsonObject report{
+                {QStringLiteral("success"), success},
+                {QStringLiteral("qt_platform"), QGuiApplication::platformName()},
+                {QStringLiteral("window_exposed"), window_exposed},
+                {QStringLiteral("vulkan_devices"), device_names},
+                {QStringLiteral("surface_present_modes"), has_present_modes},
+                {QStringLiteral("screenshot_saved"), screenshot_saved},
+                {QStringLiteral("games_tested"), false},
+                {QStringLiteral("onboarding_skipped"), true},
+            };
+            const QByteArray json = QJsonDocument(report).toJson(QJsonDocument::Compact);
+            fmt::print("SUYU_STARTUP_CHECK={}\n", json.constData());
+            std::fflush(stdout);
+            app.exit(success ? 0 : 1);
+        });
+    }
 
     int result = app.exec();
     detached_tasks.WaitForAllTasks();
