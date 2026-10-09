@@ -51,7 +51,9 @@ def clean_environment(root, evidence):
 def verify(app, evidence):
     app = app.resolve()
     with tempfile.TemporaryDirectory(prefix='suyu startup ') as temp:
-        root = Path(temp)
+        # macOS can name the same temporary directory through /var or
+        # /private/var. Keep relocation paths in their resolved form.
+        root = Path(temp).resolve()
         copied = root / 'Relocated application/suyu.app'
         copied.parent.mkdir()
         subprocess.run(['/usr/bin/ditto', str(app), str(copied)], check=True)
@@ -85,8 +87,9 @@ def verify(app, evidence):
         png = evidence / 'startup-window.png'
         if not png.is_file() or png.read_bytes()[:8] != b'\x89PNG\r\n\x1a\n':
             raise ValueError('the frontend did not save a PNG of its window')
+        # Resolve both sides, as dyld may use a different symlink spelling.
         # Avoid embedding a removed temporary path in the useful image list.
-        loaded = [str(Path(p).relative_to(copied)) if inside(Path(p), copied) else p
+        loaded = [str(Path(p).resolve().relative_to(copied.resolve())) if inside(Path(p), copied) else p
                   for p in loaded]
         return {'status': 'passed', 'exit_code': code, 'frontend': check,
                 'bundled_moltenvk_loaded': True, 'loaded_images': loaded,
