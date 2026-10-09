@@ -9581,8 +9581,13 @@ int main(int argc, char* argv[]) {
                 QString::fromUtf8(qgetenv("SUYU_STARTUP_SCREENSHOT"));
             const bool screenshot_saved =
                 !screenshot.isEmpty() && main_window.grab().save(screenshot, "PNG");
+            // closeEvent unloads controller callbacks and HID input devices while
+            // their owners are alive. Exiting the event loop directly skips that
+            // cleanup and leaves Qt children holding destroyed controller mutexes.
+            const bool window_closed = main_window.close();
             const bool success =
-                cocoa && window_exposed && !devices.empty() && has_present_modes && screenshot_saved;
+                cocoa && window_exposed && !devices.empty() && has_present_modes && screenshot_saved &&
+                window_closed;
             const QJsonObject report{
                 {QStringLiteral("success"), success},
                 {QStringLiteral("qt_platform"), QGuiApplication::platformName()},
@@ -9590,6 +9595,7 @@ int main(int argc, char* argv[]) {
                 {QStringLiteral("vulkan_devices"), device_names},
                 {QStringLiteral("surface_present_modes"), has_present_modes},
                 {QStringLiteral("screenshot_saved"), screenshot_saved},
+                {QStringLiteral("window_closed"), window_closed},
                 {QStringLiteral("games_tested"), false},
                 {QStringLiteral("onboarding_skipped"), true},
             };
